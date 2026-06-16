@@ -11,7 +11,7 @@ def test_user_model_fields():
     # 核心字段
     cols = User.__table__.columns
     col_names = {c.name for c in cols}
-    required = {"id", "phone", "nickname", "gender", "birth_year",
+    required = {"id", "phone", "hashed_password", "nickname", "gender", "birth_year",
                 "playing_years", "self_rated_ntrp", "target_ntrp",
                 "handedness", "injury_history", "created_at", "updated_at"}
     assert required.issubset(col_names), f"Missing: {required - col_names}"

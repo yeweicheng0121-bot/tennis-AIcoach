@@ -13,7 +13,7 @@ class HealthWorkout(Base):
     __tablename__ = "health_workouts"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     workout_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     start_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

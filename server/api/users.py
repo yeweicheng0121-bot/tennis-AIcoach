@@ -1,7 +1,7 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.db import get_db
@@ -33,6 +33,41 @@ class UpdateProfileRequest(BaseModel):
     target_ntrp: Optional[float] = None
     handedness: Optional[str] = None
     injury_history: Optional[list[str]] = None
+
+    @field_validator("birth_year")
+    @classmethod
+    def check_birth_year(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and (v < 1920 or v > 2020):
+            raise ValueError("birth_year must be between 1920 and 2020")
+        return v
+
+    @field_validator("playing_years")
+    @classmethod
+    def check_playing_years(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and v < 0:
+            raise ValueError("playing_years must be >= 0")
+        return v
+
+    @field_validator("self_rated_ntrp", "target_ntrp")
+    @classmethod
+    def check_ntrp(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and (v < 1.0 or v > 7.0):
+            raise ValueError("NTRP must be between 1.0 and 7.0")
+        return v
+
+    @field_validator("gender")
+    @classmethod
+    def check_gender(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ("male", "female", "other"):
+            raise ValueError("gender must be 'male', 'female', or 'other'")
+        return v
+
+    @field_validator("handedness")
+    @classmethod
+    def check_handedness(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ("left", "right", "ambidextrous"):
+            raise ValueError("handedness must be 'left', 'right', or 'ambidextrous'")
+        return v
 
 
 @router.get("/me", response_model=UserProfile)

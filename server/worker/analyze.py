@@ -20,10 +20,33 @@ AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 @celery_app.task(bind=True, name="analyze_tennis_session")
 def analyze_tennis_session(self, video_id: str, health_workout_id: str | None, user_id: str):
     import asyncio
-    return asyncio.get_event_loop().run_until_complete(_run_analysis(self, video_id, health_workout_id, user_id))
+    try:
+        return asyncio.run(_run_analysis(self, video_id, health_workout_id, user_id))
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(_run_analysis(self, video_id, health_workout_id, user_id))
+        finally:
+            loop.close()
 
 
 async def _run_analysis(task, video_id: str, health_workout_id: str | None, user_id: str):
+    try:
+        return await _do_analysis(task, video_id, health_workout_id, user_id)
+    except Exception as e:
+        async with AsyncSessionLocal() as db:
+            from server.models.video import Video
+            result = await db.execute(select(Video).where(Video.id == video_id))
+            video = result.scalar_one_or_none()
+            if video:
+                video.upload_status = "failed"
+                await db.commit()
+        task.update_state(state="FAILURE", meta={"error": str(e), "stage": "failed"})
+        raise
+
+
+async def _do_analysis(task, video_id: str, health_workout_id: str | None, user_id: str):
     async with AsyncSessionLocal() as db:
         from server.models.video import Video
         from server.models.user import User

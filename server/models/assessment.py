@@ -13,10 +13,10 @@ class Assessment(Base):
     __tablename__ = "assessments"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    video_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("videos.id"), nullable=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    video_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("videos.id", ondelete="CASCADE"), nullable=True)
     health_workout_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("health_workouts.id"), nullable=True
+        UUID(as_uuid=True), ForeignKey("health_workouts.id", ondelete="CASCADE"), nullable=True
     )
     overall_ntrp: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     ntrp_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -34,9 +34,9 @@ class TrainingPlan(Base):
     __tablename__ = "training_plans"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     assessment_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("assessments.id"), nullable=True
+        UUID(as_uuid=True), ForeignKey("assessments.id", ondelete="CASCADE"), nullable=True
     )
     duration_weeks: Mapped[int] = mapped_column(Integer, default=4)
     sessions_per_week: Mapped[int] = mapped_column(Integer, default=2)

@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from server.db import get_db
 from server.models.user import User
-from server.auth import create_access_token
+from server.auth import create_access_token, hash_password, verify_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -35,7 +35,7 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="手机号已注册")
 
-    user = User(phone=req.phone, nickname=req.nickname)
+    user = User(phone=req.phone, nickname=req.nickname, hashed_password=hash_password(req.password))
     db.add(user)
     await db.commit()
     await db.refresh(user)
@@ -48,7 +48,7 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
 async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.phone == req.phone))
     user = result.scalar_one_or_none()
-    if not user:
+    if not user or not user.hashed_password or not verify_password(req.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="手机号或密码错误")
 
     token = create_access_token(user.id)

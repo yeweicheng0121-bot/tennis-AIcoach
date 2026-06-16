@@ -21,6 +21,7 @@ class User(Base):
     playing_years: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     self_rated_ntrp: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     target_ntrp: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    hashed_password: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     handedness: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     injury_history: Mapped[Optional[list]] = mapped_column(ARRAY(Text), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

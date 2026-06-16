@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -14,6 +15,14 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 500
 
     model_config = {"env_file": ".env"}
+
+    @field_validator("claude_api_key")
+    @classmethod
+    def warn_empty_api_key(cls, v: str) -> str:
+        if not v.strip():
+            import warnings
+            warnings.warn("CLAUDE_API_KEY is empty — AI analysis will fail at runtime. Set it in .env", RuntimeWarning)
+        return v
 
 
 settings = Settings()
