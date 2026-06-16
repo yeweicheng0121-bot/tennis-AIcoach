@@ -39,6 +39,14 @@ export const uploadVideo = async (fileUri: string, fileName: string) => {
 export const submitOppoWorkout = (rawData: object) =>
   api.post("/health/workouts", { raw_data: rawData }).then(r => r.data);
 
+export const uploadScreenshot = async (fileUri: string) => {
+  const formData = new FormData();
+  formData.append("file", { uri: fileUri, name: "screenshot.jpg", type: "image/jpeg" } as any);
+  return api.post("/analysis/screenshot", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  }).then(r => r.data);
+};
+
 export const listWorkouts = () => api.get("/health/workouts").then(r => r.data);
 
 export const startAnalysis = (videoId: string, workoutId?: string) =>

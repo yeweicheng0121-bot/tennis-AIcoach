@@ -13,6 +13,7 @@
     "expo": "~56.0.12",
     "expo-document-picker": "~56.0.4",
     "expo-file-system": "~56.0.8",
+    "expo-image-picker": "~56.0.18",
     "expo-secure-store": "~56.0.4",
     "expo-status-bar": "~56.0.4",
     "ffmpeg-kit-react-native": "^6.0.2",

@@ -184,3 +184,43 @@ Base all recommendations on NTRP teaching guidelines. Use quantitative benchmark
         structured = {}
 
     return {"report_markdown": report_md, "structured": structured}
+
+
+SCREENSHOT_PROMPT = """You are a data extraction assistant. This is a screenshot from an OPPO Watch tennis mode summary.
+Extract ALL numeric values you can find. Look for Chinese labels like:
+总击球数 (total shots), 发球 (serves), 正手上旋 (forehand topspin), 正手削球 (forehand slice),
+反手上旋 (backhand topspin), 反手削球 (backhand slice), 挥拍速度 (swing speed),
+心率 (heart rate), 跑动距离 (distance), 卡路里 (calories).
+
+Output ONLY a JSON object with these fields (use null for any you cannot find):
+{
+  "total_shots": 300,
+  "serve_count": 60,
+  "forehand_topspin": 120,
+  "forehand_slice": 30,
+  "backhand_topspin": 60,
+  "backhand_slice": 30,
+  "avg_swing_speed": 45.5,
+  "avg_heart_rate": 135,
+  "max_heart_rate": 172,
+  "total_distance": 1500,
+  "total_calories": 480
+}
+
+Do not include any text outside the JSON."""
+
+
+def extract_screenshot_stats(screenshot_path: str) -> dict[str, Any]:
+    """Extract tennis statistics from an OPPO Watch screenshot."""
+    client = get_client()
+    content: list[dict[str, Any]] = [
+        {"type": "text", "text": "Extract all tennis statistics from this OPPO Watch screenshot."},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": _encode_image(screenshot_path)}},
+    ]
+    response = client.messages.create(
+        model=settings.claude_model, max_tokens=512,
+        system=SCREENSHOT_PROMPT, messages=[{"role": "user", "content": content}],
+    )
+    text = response.content[0].text
+    json_match = re.search(r'\{[\s\S]*\}', text)
+    return json.loads(json_match.group(0)) if json_match else {}
