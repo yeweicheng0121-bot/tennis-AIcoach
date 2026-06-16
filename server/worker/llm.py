@@ -1,21 +1,20 @@
-from __future__ import annotations
-"""Task 13: Claude API client for video frame analysis and report generation."""
+"""LLM client — OpenAI-compatible SDK (Qwen-VL-Max via DashScope)."""
 import base64
 import json
 import re
 from typing import Any, Optional
 
-import anthropic
+from openai import OpenAI
 
 from server.config import settings
 
-_client: Optional[anthropic.Anthropic] = None
+_client: Optional[OpenAI] = None
 
 
-def get_client() -> anthropic.Anthropic:
+def get_client() -> OpenAI:
     global _client
     if _client is None:
-        _client = anthropic.Anthropic(api_key=settings.claude_api_key)
+        _client = OpenAI(api_key=settings.llm_api_key, base_url=settings.llm_base_url)
     return _client
 
 
@@ -23,6 +22,20 @@ def _encode_image(path: str) -> str:
     with open(path, "rb") as f:
         return base64.b64encode(f.read()).decode("utf-8")
 
+
+def _image_content(path: str) -> dict[str, Any]:
+    """OpenAI-compatible image content block."""
+    return {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{_encode_image(path)}"}}
+
+
+def _chat(model: str, messages: list[dict], max_tokens: int = 512) -> str:
+    """Single chat completion with retry for JSON format issues."""
+    client = get_client()
+    resp = client.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens, temperature=0.1)
+    return resp.choices[0].message.content or ""
+
+
+# ── Prompts ──────────────────────────────────────────────
 
 CONTENT_DETECTION_PROMPT = """You are an experienced tennis coach. Examine these video keyframes and determine which technical modules are covered.
 
@@ -53,36 +66,81 @@ Evaluate:
 
 Be honest — if a frame is unclear, say so. Output in JSON format."""
 
+SCREENSHOT_PROMPT = """You are a data extraction assistant. This is a screenshot from an OPPO Watch tennis mode summary.
+Extract ALL numeric values you can find. Look for Chinese labels like:
+总击球数 (total shots), 发球 (serves), 正手上旋 (forehand topspin), 正手削球 (forehand slice),
+反手上旋 (backhand topspin), 反手削球 (backhand slice), 挥拍速度 (swing speed),
+心率 (heart rate), 跑动距离 (distance), 卡路里 (calories).
+
+Output ONLY a JSON object with these fields (use null for any you cannot find):
+{
+  "total_shots": 300, "serve_count": 60,
+  "forehand_topspin": 120, "forehand_slice": 30,
+  "backhand_topspin": 60, "backhand_slice": 30,
+  "avg_swing_speed": 45.5, "avg_heart_rate": 135,
+  "max_heart_rate": 172, "total_distance": 1500, "total_calories": 480
+}
+Do not include any text outside the JSON."""
+
+
+# ── Functions ────────────────────────────────────────────
+
+def _extract_json(text: str) -> dict[str, Any]:
+    """Robust JSON extraction from LLM output."""
+    json_match = re.search(r'\{[\s\S]*\}', text)
+    if not json_match:
+        return {}
+    try:
+        return json.loads(json_match.group(0))
+    except json.JSONDecodeError:
+        return {}
+
 
 def detect_video_modules(frame_paths: list[str]) -> dict[str, Any]:
-    client = get_client()
     sample_size = min(12, len(frame_paths))
     step = max(1, len(frame_paths) // sample_size)
     sampled = frame_paths[::step][:sample_size]
 
-    content: list[dict[str, Any]] = [{"type": "text", "text": f"Sampled {len(sampled)} keyframes. Determine which technical modules are covered."}]
-    for path in sampled:
-        content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": _encode_image(path)}})
-
-    response = client.messages.create(model=settings.claude_model, max_tokens=512, system=CONTENT_DETECTION_PROMPT, messages=[{"role": "user", "content": content}])
-    text = response.content[0].text
-    json_match = re.search(r'\{[\s\S]*\}', text)
-    return json.loads(json_match.group(0)) if json_match else {"covered_modules": [], "module_confidence": {}, "summary": ""}
+    messages = [
+        {"role": "system", "content": CONTENT_DETECTION_PROMPT},
+        {"role": "user", "content": [
+            {"type": "text", "text": f"Sampled {len(sampled)} keyframes. Determine which technical modules are covered."},
+            *[_image_content(p) for p in sampled],
+        ]},
+    ]
+    text = _chat(settings.llm_model, messages, max_tokens=512)
+    result = _extract_json(text)
+    return result if result else {"covered_modules": [], "module_confidence": {}, "summary": ""}
 
 
 def analyze_frames_batch(frame_paths: list[str], batch_index: int, total_batches: int) -> dict[str, Any]:
-    client = get_client()
-    content: list[dict[str, Any]] = [{"type": "text", "text": f"Batch {batch_index + 1}/{total_batches}, {len(frame_paths)} keyframes. Analyze the player's technical performance."}]
-    for path in frame_paths:
-        content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": _encode_image(path)}})
-    response = client.messages.create(model=settings.claude_model, max_tokens=4096, system=ANALYSIS_SYSTEM_PROMPT, messages=[{"role": "user", "content": content}])
-    return {"batch": batch_index, "raw_response": response.content[0].text}
+    messages = [
+        {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
+        {"role": "user", "content": [
+            {"type": "text", "text": f"Batch {batch_index + 1}/{total_batches}, {len(frame_paths)} keyframes. Analyze the player's technical performance."},
+            *[_image_content(p) for p in frame_paths],
+        ]},
+    ]
+    text = _chat(settings.llm_model, messages, max_tokens=4096)
+    return {"batch": batch_index, "raw_response": text}
+
+
+def extract_screenshot_stats(screenshot_path: str) -> dict[str, Any]:
+    messages = [
+        {"role": "system", "content": SCREENSHOT_PROMPT},
+        {"role": "user", "content": [
+            {"type": "text", "text": "Extract all tennis statistics from this OPPO Watch screenshot."},
+            _image_content(screenshot_path),
+        ]},
+    ]
+    text = _chat(settings.llm_model, messages, max_tokens=512)
+    return _extract_json(text)
 
 
 def generate_watch_section(oppo_stats: dict[str, Any], fitness_data: dict[str, Any]) -> str:
     if not oppo_stats:
         return """NOTE: No watch data uploaded. The following are unavailable:
-- Shot statistics (from OPPO tennis mode): unavailable — estimate from video frames
+- Shot statistics: unavailable — estimate from video frames
 - Swing speed: unavailable
 - Heart rate / distance / calories: unavailable
 - **Fitness scores: mark as "no watch data, unable to assess", set scores to null**"""
@@ -93,11 +151,9 @@ def generate_watch_section(oppo_stats: dict[str, Any], fitness_data: dict[str, A
         f"- FH topspin: {oppo_stats.get('forehand_topspin', 'N/A')} | FH slice: {oppo_stats.get('forehand_slice', 'N/A')}",
         f"- BH topspin: {oppo_stats.get('backhand_topspin', 'N/A')} | BH slice: {oppo_stats.get('backhand_slice', 'N/A')}",
         f"- Avg swing speed: {oppo_stats.get('avg_swing_speed', 'N/A')}",
-        "",
-        "## Fitness Data (from watch)",
+        "", "## Fitness Data (from watch)",
         f"- Avg HR: {fitness_data.get('cardiovascular_endurance', {}).get('avg_hr', 'N/A')} bpm",
         f"- Total distance: {fitness_data.get('movement', {}).get('total_distance_m', 'N/A')} m",
-        f"- Distance/min: {fitness_data.get('movement', {}).get('distance_per_min', 'N/A')} m/min",
         f"- Total calories: {fitness_data.get('training_load', {}).get('total_calories', 'N/A')} kcal",
     ])
 
@@ -115,7 +171,6 @@ def generate_final_report(
     covered_str = ", ".join(covered_modules)
     uncovered_str = ", ".join(uncovered) if uncovered else "none"
 
-    client = get_client()
     prompt = f"""Generate a complete NTRP tennis assessment report.
 
 ## Video Content Coverage
@@ -170,57 +225,15 @@ Part 2 (after `---JSON---`): JSON object:
 
 Base all recommendations on NTRP teaching guidelines. Use quantitative benchmarks where available."""
 
-    response = client.messages.create(model=settings.claude_model, max_tokens=8192, messages=[{"role": "user", "content": prompt}])
-    full_text = response.content[0].text
+    messages = [{"role": "user", "content": prompt}]
+    full_text = _chat(settings.llm_model, messages, max_tokens=8192)
 
     if "---JSON---" in full_text:
         parts = full_text.split("---JSON---", 1)
         report_md = parts[0].strip()
-        json_str = parts[1].strip()
-        json_match = re.search(r'\{[\s\S]*\}', json_str)
-        structured = json.loads(json_match.group(0)) if json_match else {}
+        structured = _extract_json(parts[1].strip())
     else:
         report_md = full_text
         structured = {}
 
     return {"report_markdown": report_md, "structured": structured}
-
-
-SCREENSHOT_PROMPT = """You are a data extraction assistant. This is a screenshot from an OPPO Watch tennis mode summary.
-Extract ALL numeric values you can find. Look for Chinese labels like:
-总击球数 (total shots), 发球 (serves), 正手上旋 (forehand topspin), 正手削球 (forehand slice),
-反手上旋 (backhand topspin), 反手削球 (backhand slice), 挥拍速度 (swing speed),
-心率 (heart rate), 跑动距离 (distance), 卡路里 (calories).
-
-Output ONLY a JSON object with these fields (use null for any you cannot find):
-{
-  "total_shots": 300,
-  "serve_count": 60,
-  "forehand_topspin": 120,
-  "forehand_slice": 30,
-  "backhand_topspin": 60,
-  "backhand_slice": 30,
-  "avg_swing_speed": 45.5,
-  "avg_heart_rate": 135,
-  "max_heart_rate": 172,
-  "total_distance": 1500,
-  "total_calories": 480
-}
-
-Do not include any text outside the JSON."""
-
-
-def extract_screenshot_stats(screenshot_path: str) -> dict[str, Any]:
-    """Extract tennis statistics from an OPPO Watch screenshot."""
-    client = get_client()
-    content: list[dict[str, Any]] = [
-        {"type": "text", "text": "Extract all tennis statistics from this OPPO Watch screenshot."},
-        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": _encode_image(screenshot_path)}},
-    ]
-    response = client.messages.create(
-        model=settings.claude_model, max_tokens=512,
-        system=SCREENSHOT_PROMPT, messages=[{"role": "user", "content": content}],
-    )
-    text = response.content[0].text
-    json_match = re.search(r'\{[\s\S]*\}', text)
-    return json.loads(json_match.group(0)) if json_match else {}

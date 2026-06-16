@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from server.config import settings
 from server.worker.celery_app import celery_app
 from server.worker.frames import extract_keyframes
-from server.worker.claude import analyze_frames_batch, generate_final_report, detect_video_modules
+from server.worker.llm import analyze_frames_batch, generate_final_report, detect_video_modules
 from server.worker.rag import retrieve_relevant_chunks, format_chunks_for_prompt
 from server.worker.oppo import compute_fitness_breakdown
 

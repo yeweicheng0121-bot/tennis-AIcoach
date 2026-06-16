@@ -48,7 +48,7 @@ async def upload_screenshot(
         f.write(await file.read())
 
     # Extract stats via Claude
-    from server.worker.claude import extract_screenshot_stats
+    from server.worker.llm import extract_screenshot_stats
     stats = extract_screenshot_stats(tmp_path)
 
     # Clean up
