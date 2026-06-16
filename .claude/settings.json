@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cp /tmp/mobile_src_backup/screens/*.tsx src/screens/)",
+      "Bash(cp /tmp/mobile_src_backup/services/*.ts src/services/)",
+      "Bash(cp /tmp/mobile_src_backup/store/*.ts src/store/)",
+      "Bash(cp /tmp/mobile_src_backup/components/*.tsx src/components/)",
+      "Bash(cp /tmp/mobile_src_backup/navigation/*.tsx src/navigation/)",
+      "Bash(curl -s http://localhost:8081)",
+      "Bash(pkill -f \"expo start\")",
+      "Bash(pkill -f \"expo\")",
+      "Bash(git commit -m 'fix: downgrade to Expo SDK 54 for iPhone compatibility *)"
+    ]
+  }
+}

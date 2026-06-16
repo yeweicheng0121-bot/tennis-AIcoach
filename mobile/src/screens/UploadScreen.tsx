@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Alert } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
-import * as FileSystem from "expo-file-system";
 import { uploadVideo, uploadScreenshot, startAnalysis } from "../services/api";
 
 const C = { bg: "#0A0D14", card: "#111827", accent: "#00D68F", text: "#FFFFFF", muted: "#6B7280", sub: "#9CA3AF", border: "#1F2937", red: "#EF4444" };
@@ -17,11 +16,8 @@ export default function UploadScreen({ navigation }: any) {
     const result = await DocumentPicker.getDocumentAsync({ type: "video/*", copyToCacheDirectory: true });
     if (result.canceled || !result.assets?.length) return;
     const asset = result.assets[0];
-    setStatus("Compressing…");
-    const outPath = `${FileSystem.cacheDirectory}comp_${Date.now()}.mp4`;
-    try { const { FFmpegKit } = require("ffmpeg-kit-react-native"); await FFmpegKit.execute(`-i ${asset.uri} -vf "scale=-2:720,fps=30" -c:v libx264 -b:v 4M -c:a aac -b:a 128k -y ${outPath}`); } catch {}
     setStatus("Uploading…");
-    try { const d = await uploadVideo(outPath, "video.mp4"); setVideoId(d.video_id); setStatus(""); Alert.alert("Ready", "Video uploaded successfully"); }
+    try { const d = await uploadVideo(asset.uri, asset.name); setVideoId(d.video_id); setStatus(""); Alert.alert("Ready", "Video uploaded successfully"); }
     catch (e: any) { Alert.alert("Error", e.message); setStatus(""); }
   };
 

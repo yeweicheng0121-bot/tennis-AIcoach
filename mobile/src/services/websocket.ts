@@ -1,4 +1,4 @@
-const WS_BASE = "ws://localhost:8000";
+const WS_BASE = "ws://172.18.226.0:8000";
 
 export function connectTaskStream(
   taskId: string,

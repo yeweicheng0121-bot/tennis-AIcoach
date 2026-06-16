@@ -1,7 +1,9 @@
 import axios from "axios";
 import { getToken } from "./auth";
 
-const API_BASE = "http://localhost:8000";
+// Change this to your Mac's local IP when testing on a real device.
+// Run `ipconfig getifaddr en0` on your Mac to find it.
+const API_BASE = "http://172.18.226.0:8000";
 const api = axios.create({ baseURL: API_BASE });
 
 api.interceptors.request.use(async (config) => {
