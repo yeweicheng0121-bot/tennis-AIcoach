@@ -9,7 +9,15 @@
       "Bash(curl -s http://localhost:8081)",
       "Bash(pkill -f \"expo start\")",
       "Bash(pkill -f \"expo\")",
-      "Bash(git commit -m 'fix: downgrade to Expo SDK 54 for iPhone compatibility *)"
+      "Bash(git commit -m 'fix: downgrade to Expo SDK 54 for iPhone compatibility *)",
+      "Bash(git commit *)",
+      "Bash(node -e \"console.log\\('RN:', require\\('react-native/package.json'\\).version\\); console.log\\('Expo:', require\\('expo/package.json'\\).version\\); console.log\\('ExpoModules:', require\\('expo-modules-core/package.json'\\).version\\)\")",
+      "Bash(mkdir -p /tmp/tennis_backup)",
+      "Bash(cp -r mobile/src /tmp/tennis_backup/)",
+      "Bash(npx create-expo-app@54.0.35 mobile --template blank-typescript)",
+      "Bash(rm -rf /tmp/test_expo)",
+      "Bash(npx create-expo-app@latest /tmp/test_expo --template blank-typescript)",
+      "Read(//tmp/test_expo/**)"
     ]
   }
 }
