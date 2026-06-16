@@ -1,27 +1,37 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
 
+const C = { card: "#111827", accent: "#00D68F", text: "#FFFFFF", muted: "#6B7280", sub: "#9CA3AF", border: "#1F2937", track: "#1A1F2E" };
+
+const MAX = 100;
+
 export default function RadarChart({ data }: { data: Record<string, number> }) {
   return (
-    <View style={s.wrap}>
-      <Text style={s.title}>Technique Radar</Text>
-      {Object.entries(data).map(([label, value]) => (
-        <View key={label} style={s.row}>
-          <Text style={s.lbl}>{label}</Text>
-          <View style={s.track}><View style={[s.fill, { width: `${value}%` }]} /></View>
-          <Text style={s.val}>{value}</Text>
-        </View>
-      ))}
+    <View style={styles.wrap}>
+      <Text style={styles.title}>TECHNIQUE BREAKDOWN</Text>
+      {Object.entries(data).map(([label, value]) => {
+        const pct = Math.min(value, MAX);
+        const color = value === 0 ? C.muted : pct >= 70 ? C.accent : pct >= 40 ? "#F59E0B" : "#EF4444";
+        return (
+          <View key={label} style={styles.row}>
+            <Text style={styles.lbl}>{label}</Text>
+            <View style={styles.track}>
+              <View style={[styles.fill, { width: `${pct}%`, backgroundColor: color }]} />
+            </View>
+            <Text style={[styles.val, { color }]}>{value || "—"}</Text>
+          </View>
+        );
+      })}
     </View>
   );
 }
 
-const s = StyleSheet.create({
-  wrap: { backgroundColor: "#fff", borderRadius: 12, padding: 16, marginBottom: 12 },
-  title: { fontSize: 16, fontWeight: "600", marginBottom: 12 },
-  row: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
-  lbl: { width: 70, fontSize: 13, color: "#666" },
-  track: { flex: 1, height: 12, backgroundColor: "#eee", borderRadius: 6, overflow: "hidden" },
-  fill: { height: "100%", backgroundColor: "#4CAF50", borderRadius: 6 },
-  val: { width: 36, textAlign: "right", fontSize: 13, fontWeight: "600" },
+const styles = StyleSheet.create({
+  wrap: { backgroundColor: C.card, borderRadius: 16, padding: 18, marginBottom: 12, borderWidth: 1, borderColor: C.border },
+  title: { fontSize: 11, fontWeight: "700", color: C.sub, letterSpacing: 1.5, marginBottom: 14 },
+  row: { flexDirection: "row", alignItems: "center", marginBottom: 10 },
+  lbl: { width: 78, fontSize: 12, fontWeight: "600", color: C.sub },
+  track: { flex: 1, height: 8, backgroundColor: C.track, borderRadius: 4, overflow: "hidden" },
+  fill: { height: "100%", borderRadius: 4 },
+  val: { width: 32, textAlign: "right", fontSize: 14, fontWeight: "700", marginLeft: 8 },
 });

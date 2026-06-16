@@ -5,6 +5,8 @@ import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system";
 import { uploadVideo, uploadScreenshot, startAnalysis } from "../services/api";
 
+const C = { bg: "#0A0D14", card: "#111827", accent: "#00D68F", text: "#FFFFFF", muted: "#6B7280", sub: "#9CA3AF", border: "#1F2937", red: "#EF4444" };
+
 export default function UploadScreen({ navigation }: any) {
   const [videoId, setVideoId] = useState<string | null>(null);
   const [selectedWorkout, setSelectedWorkout] = useState<string | null>(null);
@@ -15,100 +17,77 @@ export default function UploadScreen({ navigation }: any) {
     const result = await DocumentPicker.getDocumentAsync({ type: "video/*", copyToCacheDirectory: true });
     if (result.canceled || !result.assets?.length) return;
     const asset = result.assets[0];
-
-    setStatus("Compressing...");
+    setStatus("Compressing…");
     const outPath = `${FileSystem.cacheDirectory}comp_${Date.now()}.mp4`;
-    try {
-      const { FFmpegKit } = require("ffmpeg-kit-react-native");
-      await FFmpegKit.execute(`-i ${asset.uri} -vf "scale=-2:720,fps=30" -c:v libx264 -b:v 4M -c:a aac -b:a 128k -y ${outPath}`);
-    } catch {}
-
-    setStatus("Uploading...");
-    try {
-      const data = await uploadVideo(outPath, "video.mp4");
-      setVideoId(data.video_id);
-      setStatus("Ready");
-      Alert.alert("Success", "Video uploaded");
-    } catch (e: any) {
-      Alert.alert("Upload failed", e.message);
-      setStatus("");
-    }
+    try { const { FFmpegKit } = require("ffmpeg-kit-react-native"); await FFmpegKit.execute(`-i ${asset.uri} -vf "scale=-2:720,fps=30" -c:v libx264 -b:v 4M -c:a aac -b:a 128k -y ${outPath}`); } catch {}
+    setStatus("Uploading…");
+    try { const d = await uploadVideo(outPath, "video.mp4"); setVideoId(d.video_id); setStatus(""); Alert.alert("Ready", "Video uploaded successfully"); }
+    catch (e: any) { Alert.alert("Error", e.message); setStatus(""); }
   };
 
   const pickScreenshot = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert("Permission needed", "Please allow photo library access");
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: "images",
-      quality: 0.9,
-    });
+    if (!perm.granted) { Alert.alert("Permission needed"); return; }
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: "images", quality: 0.9 });
     if (result.canceled || !result.assets?.length) return;
-
-    setStatus("Extracting stats from screenshot...");
+    setStatus("Extracting stats…");
     try {
       const data = await uploadScreenshot(result.assets[0].uri);
-      if (data.workout_id) {
-        setSelectedWorkout(data.workout_id);
-        setScreenshotStats(data.extracted_stats);
-        setStatus("✅ Stats extracted");
-        Alert.alert(
-          "Stats Extracted",
-          `Shots: ${data.extracted_stats?.total_shots || "?"}\nHR: ${data.extracted_stats?.avg_heart_rate || "?"} bpm\nDistance: ${data.extracted_stats?.total_distance || "?"}m`
-        );
-      } else {
-        setStatus("⚠️ Could not extract stats");
-        Alert.alert("Notice", "Could not read stats from screenshot. You can still proceed without watch data.");
-      }
-    } catch (e: any) {
-      setStatus("Screenshot upload failed");
-    }
+      if (data.workout_id) { setSelectedWorkout(data.workout_id); setScreenshotStats(data.extracted_stats); setStatus(""); }
+      else { setStatus(""); Alert.alert("Notice", "Could not read stats. You can still proceed."); }
+    } catch { setStatus(""); }
   };
 
   const handleStart = async () => {
-    if (!videoId) { Alert.alert("Upload video first"); return; }
-    try {
-      const r = await startAnalysis(videoId, selectedWorkout || undefined);
-      navigation.navigate("AnalysisProgress", { taskId: r.task_id });
-    } catch (e: any) { Alert.alert("Failed", e.message); }
+    if (!videoId) { Alert.alert("Upload a video first"); return; }
+    try { const r = await startAnalysis(videoId, selectedWorkout || undefined); navigation.navigate("AnalysisProgress", { taskId: r.task_id }); }
+    catch (e: any) { Alert.alert("Failed", e.message); }
   };
 
   return (
-    <View style={s.wrap}>
-      <Text style={s.title}>Start Analysis</Text>
+    <View style={styles.wrap}>
+      <Text style={styles.title}>New Analysis</Text>
 
-      <TouchableOpacity style={s.btn} onPress={pickVideo}>
-        <Text style={s.btnT}>{videoId ? "✅ Video Ready" : "📹 Select Video"}</Text>
-      </TouchableOpacity>
-      {status ? <Text style={s.status}>{status}</Text> : null}
-
-      <TouchableOpacity style={s.btn} onPress={pickScreenshot}>
-        <Text style={s.btnT}>
-          {screenshotStats ? `📊 ${screenshotStats.total_shots || "?"} shots | HR ${screenshotStats.avg_heart_rate || "?"}` : "📱 OPPO Screenshot (optional)"}
-        </Text>
+      <TouchableOpacity style={styles.step} onPress={pickVideo} activeOpacity={0.7}>
+        <View style={styles.stepIcon}><Text style={styles.stepNum}>1</Text></View>
+        <View style={styles.stepContent}>
+          <Text style={styles.stepTitle}>{videoId ? "Video Ready" : "Select Video"}</Text>
+          <Text style={styles.stepSub}>{videoId ? "✅ Compressed & uploaded" : "Tap to choose from library"}</Text>
+        </View>
+        <Text style={styles.stepArrow}>→</Text>
       </TouchableOpacity>
 
-      <Text style={s.hint}>
-        Take a screenshot of your OPPO Watch tennis mode summary.{"\n"}
-        AI will extract your stats automatically.
-      </Text>
+      <TouchableOpacity style={styles.step} onPress={pickScreenshot} activeOpacity={0.7}>
+        <View style={[styles.stepIcon, screenshotStats && { backgroundColor: C.accent }]}>
+          <Text style={[styles.stepNum, screenshotStats && { color: "#0A0D14" }]}>{screenshotStats ? "✓" : "2"}</Text>
+        </View>
+        <View style={styles.stepContent}>
+          <Text style={styles.stepTitle}>OPPO Watch Screenshot</Text>
+          <Text style={styles.stepSub}>{screenshotStats ? `📊 ${screenshotStats.total_shots} shots · ${screenshotStats.avg_heart_rate} bpm` : "Optional — tap to add watch data"}</Text>
+        </View>
+        <Text style={styles.stepArrow}>→</Text>
+      </TouchableOpacity>
 
-      <TouchableOpacity style={[s.startBtn, !videoId && { opacity: 0.5 }]} onPress={handleStart} disabled={!videoId}>
-        <Text style={s.startBtnT}>Start AI Analysis</Text>
+      {status ? <Text style={styles.status}>{status}</Text> : null}
+
+      <TouchableOpacity style={[styles.startBtn, !videoId && { opacity: 0.4 }]} onPress={handleStart} disabled={!videoId} activeOpacity={0.8}>
+        <Text style={styles.startBtnText}>Start AI Analysis</Text>
       </TouchableOpacity>
     </View>
   );
 }
 
-const s = StyleSheet.create({
-  wrap: { flex: 1, padding: 16, backgroundColor: "#f5f5f5" },
-  title: { fontSize: 22, fontWeight: "bold", marginTop: 40, marginBottom: 24 },
-  btn: { backgroundColor: "#fff", borderRadius: 12, padding: 18, marginBottom: 12, borderWidth: 1, borderColor: "#ddd" },
-  btnT: { fontSize: 16, textAlign: "center" },
-  status: { textAlign: "center", color: "#4CAF50", marginBottom: 8, fontSize: 13 },
-  hint: { textAlign: "center", color: "#999", fontSize: 12, marginBottom: 16, lineHeight: 18 },
-  startBtn: { backgroundColor: "#4CAF50", borderRadius: 12, padding: 18, alignItems: "center", marginTop: 8 },
-  startBtnT: { color: "#fff", fontSize: 18, fontWeight: "600" },
+const styles = StyleSheet.create({
+  wrap: { flex: 1, backgroundColor: C.bg, padding: 20 },
+  title: { fontSize: 28, fontWeight: "800", color: C.text, marginTop: 50, marginBottom: 28 },
+  step: { backgroundColor: C.card, borderRadius: 16, padding: 18, marginBottom: 12, flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: C.border },
+  stepIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#1F2937", alignItems: "center", justifyContent: "center", marginRight: 14 },
+  stepNum: { fontSize: 16, fontWeight: "700", color: C.sub },
+  stepContent: { flex: 1 },
+  stepTitle: { fontSize: 16, fontWeight: "600", color: C.text },
+  stepSub: { fontSize: 12, color: C.muted, marginTop: 3 },
+  stepArrow: { fontSize: 20, color: C.muted },
+  status: { textAlign: "center", color: C.accent, fontSize: 13, marginVertical: 8 },
+  startBtn: { backgroundColor: C.accent, borderRadius: 16, padding: 18, alignItems: "center", marginTop: 20 },
+  startBtnText: { color: "#0A0D14", fontSize: 17, fontWeight: "700" },
 });
