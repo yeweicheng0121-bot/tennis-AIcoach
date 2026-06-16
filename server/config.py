@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     frame_storage_path: str = "./storage/frames"
     max_upload_size_mb: int = 500
 
-    model_config = {"env_file": ".env"}
+    model_config = {"env_file": "server/.env"}
 
     @field_validator("claude_api_key")
     @classmethod
