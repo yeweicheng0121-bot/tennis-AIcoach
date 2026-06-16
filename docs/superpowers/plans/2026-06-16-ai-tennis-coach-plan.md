@@ -1543,6 +1543,33 @@ def analyze_frames_batch(frame_paths: list[str], batch_index: int, total_batches
 
     return {"batch": batch_index, "raw_response": response.content[0].text}
 
+
+def generate_watch_section(oppo_stats: dict[str, Any], fitness_data: dict[str, Any]) -> str:
+    """根据有无手表数据生成 Prompt 中的手表数据段落。"""
+    if not oppo_stats:
+        return """⚠️ 用户未上传手表数据，无法获取以下信息：
+- 击球类型统计（来自 OPPO 网球模式）：不可用 — 请基于视频帧粗略估算
+- 挥拍速度：不可用
+- 心率/跑动/卡路里：不可用
+- **体能评分（心肺/移动/负荷）：请标注"未上传手表数据，无法评估体能"，分数设为 null**"""
+
+    lines = [
+        f"- 总击球数：{oppo_stats.get('total_shots', 'N/A')}",
+        f"- 发球数：{oppo_stats.get('serve_count', 'N/A')}",
+        f"- 正手上旋：{oppo_stats.get('forehand_topspin', 'N/A')} 次 | 正手削球：{oppo_stats.get('forehand_slice', 'N/A')} 次",
+        f"- 反手上旋：{oppo_stats.get('backhand_topspin', 'N/A')} 次 | 反手削球：{oppo_stats.get('backhand_slice', 'N/A')} 次",
+        f"- 平均挥拍速度：{oppo_stats.get('avg_swing_speed', 'N/A')}",
+        "",
+        "## 体能数据（来自手表）",
+        f"- 平均心率：{fitness_data.get('cardiovascular_endurance', {}).get('avg_hr', 'N/A')} bpm",
+        f"- 最大心率：{fitness_data.get('cardiovascular_endurance', {}).get('max_hr', 'N/A')} bpm",
+        f"- 总跑动距离：{fitness_data.get('movement', {}).get('total_distance_m', 'N/A')} m",
+        f"- 每分钟跑动：{fitness_data.get('movement', {}).get('distance_per_min', 'N/A')} m/min",
+        f"- 总卡路里：{fitness_data.get('training_load', {}).get('total_calories', 'N/A')} kcal",
+    ]
+    return "\n".join(lines)
+
+
 def generate_final_report(
     frame_analyses: list[dict[str, Any]],
     oppo_stats: dict[str, Any],
@@ -1552,11 +1579,13 @@ def generate_final_report(
     covered_modules: list[str],
 ) -> dict[str, Any]:
     """汇总所有分析结果，生成 Markdown 报告 + 结构化 JSON。
-    仅对 covered_modules 中的模块评分，未覆盖模块标注为数据不足。"""
+    仅对 covered_modules 中的模块评分，未覆盖模块标注为数据不足。
+    无手表数据时跳过体能评分。"""
     all_modules = ["forehand", "backhand", "serve", "volley", "footwork", "return"]
     uncovered = [m for m in all_modules if m not in covered_modules]
     covered_str = ", ".join(covered_modules)
     uncovered_str = ", ".join(uncovered) if uncovered else "无"
+    has_watch = bool(oppo_stats)
     client = get_client()
 
     prompt = f"""请基于以下信息，生成一份完整的 NTRP 网球评估报告。
@@ -1574,18 +1603,7 @@ def generate_final_report(
 - 伤病史：{user_profile.get('injury_history', '无')}
 
 ## OPPO 手表数据
-- 总击球数：{oppo_stats.get('total_shots', 'N/A')}
-- 发球数：{oppo_stats.get('serve_count', 'N/A')}
-- 正手上旋：{oppo_stats.get('forehand_topspin', 'N/A')} 次 | 正手削球：{oppo_stats.get('forehand_slice', 'N/A')} 次
-- 反手上旋：{oppo_stats.get('backhand_topspin', 'N/A')} 次 | 反手削球：{oppo_stats.get('backhand_slice', 'N/A')} 次
-- 平均挥拍速度：{oppo_stats.get('avg_swing_speed', 'N/A')}
-
-## 体能数据
-- 平均心率：{fitness_data.get('cardiovascular_endurance', {}).get('avg_hr', 'N/A')} bpm
-- 最大心率：{fitness_data.get('cardiovascular_endurance', {}).get('max_hr', 'N/A')} bpm
-- 总跑动距离：{fitness_data.get('movement', {}).get('total_distance_m', 'N/A')} m
-- 每分钟跑动：{fitness_data.get('movement', {}).get('distance_per_min', 'N/A')} m/min
-- 总卡路里：{fitness_data.get('training_load', {}).get('total_calories', 'N/A')} kcal
+{generate_watch_section(oppo_stats, fitness_data)}
 
 ## 视频帧分析摘要
 {chr(10).join([f'- 批次 {a["batch"] + 1}: {a["raw_response"][:300]}...' for a in frame_analyses])}
@@ -1599,7 +1617,7 @@ def generate_final_report(
 第一部分：完整的 Markdown 格式评估报告，包含：
 1. 综合 NTRP 等级评定（含置信度；若缺失模块 ≥3 个，仅输出各模块独立评分，不输出综合 NTRP）
 2. 技术评分（正手/反手/发球/截击/脚步/接发，已覆盖模块给出 0-100 分 + 依据，未覆盖模块标注"未检测到模块内容，数据不足"）
-3. 体能评分（心肺/移动/负荷，每项 0-100 分 + 依据）
+3. 体能评分（如有手表数据：心肺/移动/负荷，每项 0-100 分 + 依据；无手表数据：标注"未上传手表数据，无法评估体能"）
 4. 强弱项识别（仅基于有数据的模块）
 5. 关键问题帧说明
 6. 4 周训练计划（仅针对有数据的弱项，每周 2 次）
