@@ -23,6 +23,23 @@ app.add_middleware(
 )
 
 
+from server.api.auth import router as auth_router
+from server.api.users import router as users_router
+from server.api.videos import router as videos_router
+from server.api.health import router as health_router
+from server.api.analysis import router as analysis_router
+from server.api.assessments import router as assessments_router
+from server.api.training import router as training_router
+
+app.include_router(auth_router)
+app.include_router(users_router)
+app.include_router(videos_router)
+app.include_router(health_router)
+app.include_router(analysis_router)
+app.include_router(assessments_router)
+app.include_router(training_router)
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
