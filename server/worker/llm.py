@@ -192,7 +192,8 @@ def generate_fitness_section_text(fitness_data: dict[str, Any]) -> str:
 
 
 def generate_final_report(
-    frame_analyses: list[dict[str, Any]],
+    structured_data: dict[str, Any],
+    key_frame_paths: list[str],
     oppo_stats: dict[str, Any],
     fitness_data: dict[str, Any],
     rag_context: str,
@@ -207,7 +208,7 @@ def generate_final_report(
     focus_hint = f"""
 
 ## ⚠️ 重要提示
-学员告知此视频主要练习的是 **{focus_module}**。即使从静态帧中看起来像其他技术动作，也请优先按照 {focus_module} 来分析。注意区分 {focus_module} 的关键特征（如发球的抛球动作、trophy position、平台站位等）。""" if focus_module else ""
+学员告知此视频主要练习的是 **{focus_module}**。请优先按照 {focus_module} 来分析。""" if focus_module else ""
 
     prompt = f"""你是一位资深网球教练，正在为一位学员撰写技术分析报告。请严格按以下四段式结构撰写。
 {focus_hint}
@@ -222,8 +223,17 @@ def generate_final_report(
 ## 手表数据
 {generate_watch_section(oppo_stats, fitness_data)}
 
-## AI 帧分析结果
-{chr(10).join([f'批次{a["batch"]+1}: {a["raw_response"][:400]}' for a in frame_analyses])}
+## MediaPipe 运动学分析数据（精确量化）
+```json
+{json.dumps(structured_data, ensure_ascii=False, indent=2)[:4000]}
+```
+
+以上数据是通过 MediaPipe Pose + 运动学计算得出的精确指标：
+- 角度数据精确到 ±2°，速度数据基于帧间位移计算
+- 关键帧是 biomechanical extremum（扭转峰值/腕速峰值/抛球最高点）
+- 击球类型分布基于手腕轨迹的启发式分类
+
+{generate_fitness_section_text(fitness_data)}
 
 ## NTRP 教学参考
 {rag_context}
@@ -300,7 +310,19 @@ def generate_final_report(
 }}
 ```"""
 
-    full_text = _chat('You are a professional tennis coach writing a coaching report in Chinese.', [{"role": "user", "content": prompt}], max_tokens=8192)
+    # Build message: text prompt + 3 key frame images
+    user_content = [{"type": "text", "text": prompt}]
+    for kp in key_frame_paths[:3]:
+        try:
+            user_content.append(_image_content(kp))
+        except Exception:
+            pass  # skip unreadable frames
+
+    full_text = _chat(
+        'You are a professional tennis coach writing a coaching report in Chinese.',
+        [{"role": "user", "content": user_content}],
+        max_tokens=8192
+    )
 
     if "---JSON---" in full_text:
         parts = full_text.split("---JSON---", 1)

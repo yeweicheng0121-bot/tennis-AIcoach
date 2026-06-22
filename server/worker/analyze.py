@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from server.config import settings
 from server.worker.celery_app import celery_app
-from server.worker.frames import extract_keyframes
-from server.worker.llm import analyze_frames_batch, generate_final_report, detect_video_modules
+from server.worker.frames import extract_all_frames
+from server.worker.llm import generate_final_report
 from server.worker.rag import retrieve_relevant_chunks, format_chunks_for_prompt
 from server.worker.oppo import compute_fitness_breakdown
 
@@ -65,30 +65,32 @@ async def _do_analysis(task, video_id: str, health_workout_id: str | None, user_
         task.update_state(state="PROCESSING", meta={"stage": "extracting_frames", "progress": 0.05})
 
         frame_dir = os.path.join(settings.frame_storage_path, video_id)
-        # Delete old frames to force re-extraction with current settings
         import shutil
         if os.path.exists(frame_dir):
             shutil.rmtree(frame_dir)
-        # Dense extraction for short practice videos: serve motions happen in ~1s
-        video_duration = video.duration_seconds or 120
-        interval = 2 if video_duration < 180 else 15
-        frame_paths = extract_keyframes(video.storage_path, frame_dir, interval_seconds=interval)
 
-        task.update_state(state="PROCESSING", meta={"stage": "detecting_content", "progress": 0.15, "message": "Identifying technical modules..."})
-        content_info = detect_video_modules(frame_paths, focus_module)
-        covered_modules = content_info.get("covered_modules", [])
-        if not covered_modules:
-            covered_modules = ["forehand", "backhand", "serve", "volley", "footwork", "return"]
+        # ── v2.0: OpenCV + MediaPipe pipeline ──
+        from server.worker.frames import extract_all_frames
+        from server.worker.pose import extract_landmarks_batch
+        from server.worker.biomechanics import find_key_frames, compute_angle_stats, classify_shot_types
+        from server.worker.structured_report import build_structured_data
 
-        task.update_state(state="PROCESSING", meta={"stage": "analyzing_frames", "progress": 0.25, "frame_count": len(frame_paths)})
+        all_frames, fps = extract_all_frames(video.storage_path, frame_dir)
+        video_duration = video.duration_seconds or (len(all_frames) / fps if fps > 0 else 120)
 
-        BATCH_SIZE = 20
-        batches = [frame_paths[i:i + BATCH_SIZE] for i in range(0, len(frame_paths), BATCH_SIZE)]
-        frame_analyses = []
-        for i, batch in enumerate(batches):
-            pct = 0.25 + 0.35 * (i / len(batches))
-            task.update_state(state="PROCESSING", meta={"stage": "analyzing_frames", "progress": pct, "batch": i + 1, "total_batches": len(batches)})
-            frame_analyses.append(analyze_frames_batch(batch, i, len(batches), focus_module))
+        task.update_state(state="PROCESSING", meta={"stage": "pose_estimation", "progress": 0.15, "frame_count": len(all_frames)})
+        landmarks_by_frame = extract_landmarks_batch(all_frames)
+
+        task.update_state(state="PROCESSING", meta={"stage": "biomechanics", "progress": 0.35})
+        structured_data = build_structured_data(landmarks_by_frame, all_frames, fps, video_duration, focus_module)
+        covered_modules = structured_data.get("covered_modules", ["forehand", "backhand", "serve", "volley", "footwork", "return"])
+
+        # Key frame paths for Claude (3 images only)
+        key_frame_paths = [kf["frame_path"] for kf in structured_data.get("key_frames", []) if kf.get("frame_path")]
+        if not key_frame_paths and all_frames:
+            # Fallback: first, middle, last
+            n = len(all_frames)
+            key_frame_paths = [all_frames[i] for i in [0, n // 2, n - 1] if i < n]
 
         oppo_stats = {}
         fitness_data = {}
@@ -120,11 +122,13 @@ async def _do_analysis(task, video_id: str, health_workout_id: str | None, user_
 
         task.update_state(state="PROCESSING", meta={"stage": "retrieving_knowledge", "progress": 0.70})
 
-        all_text = " ".join([a["raw_response"] for a in frame_analyses])
+        # Extract weaknesses from biomechanics stats
+        angle_stats = structured_data.get("angle_statistics", {})
         rough_weaknesses = []
-        for label, kws in {"反手": ["反手", "backhand"], "发球": ["发球", "serve"], "脚步": ["脚步", "footwork"], "截击": ["截击", "volley"], "正手": ["正手", "forehand"], "接发": ["接发", "return"]}.items():
-            if any(kw in all_text for kw in kws):
-                rough_weaknesses.append(label)
+        if angle_stats.get("torso_twist", {}).get("avg", 45) < 30:
+            rough_weaknesses.append("正手")
+        if angle_stats.get("shoulder", {}).get("avg", 90) < 70:
+            rough_weaknesses.append("发球")
         if not rough_weaknesses:
             rough_weaknesses = ["反手", "发球"]
 
@@ -133,7 +137,7 @@ async def _do_analysis(task, video_id: str, health_workout_id: str | None, user_
 
         task.update_state(state="PROCESSING", meta={"stage": "generating_report", "progress": 0.85})
 
-        report_result = generate_final_report(frame_analyses, oppo_stats, fitness_data, rag_context, user_profile, covered_modules, focus_module)
+        report_result = generate_final_report(structured_data, key_frame_paths, oppo_stats, fitness_data, rag_context, user_profile, covered_modules, focus_module)
         report_md = report_result["report_markdown"]
         structured = report_result["structured"]
 
