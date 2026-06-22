@@ -154,23 +154,41 @@ def extract_screenshot_stats(screenshot_path: str) -> dict[str, Any]:
 
 def generate_watch_section(oppo_stats: dict[str, Any], fitness_data: dict[str, Any]) -> str:
     if not oppo_stats:
-        return """NOTE: No watch data uploaded. The following are unavailable:
-- Shot statistics: unavailable — estimate from video frames
-- Swing speed: unavailable
-- Heart rate / distance / calories: unavailable
-- **Fitness scores: mark as "no watch data, unable to assess", set scores to null**"""
+        return "⚠️ 学员未上传手表数据，本次报告不包含体能分析。请在下次评估时关联 OPPO 手表数据以获得跑动效率、心率分配、体能负荷等分析。"
 
-    return "\n".join([
-        f"- Total shots: {oppo_stats.get('total_shots', 'N/A')}",
-        f"- Serves: {oppo_stats.get('serve_count', 'N/A')}",
-        f"- FH topspin: {oppo_stats.get('forehand_topspin', 'N/A')} | FH slice: {oppo_stats.get('forehand_slice', 'N/A')}",
-        f"- BH topspin: {oppo_stats.get('backhand_topspin', 'N/A')} | BH slice: {oppo_stats.get('backhand_slice', 'N/A')}",
-        f"- Avg swing speed: {oppo_stats.get('avg_swing_speed', 'N/A')}",
-        "", "## Fitness Data (from watch)",
-        f"- Avg HR: {fitness_data.get('cardiovascular_endurance', {}).get('avg_hr', 'N/A')} bpm",
-        f"- Total distance: {fitness_data.get('movement', {}).get('total_distance_m', 'N/A')} m",
-        f"- Total calories: {fitness_data.get('training_load', {}).get('total_calories', 'N/A')} kcal",
-    ])
+    cardio = fitness_data.get("cardiovascular_endurance", {}) or {}
+    movement = fitness_data.get("movement", {}) or {}
+    load = fitness_data.get("training_load", {}) or {}
+    return f"""## ⌚ 手表数据（可用）
+
+### 击球统计
+| 指标 | 数值 |
+|------|------|
+| 总击球数 | {oppo_stats.get('total_shots', 'N/A')} |
+| 发球数 | {oppo_stats.get('serve_count', 'N/A')} |
+| 正手上旋/削球 | {oppo_stats.get('forehand_topspin', 'N/A')} / {oppo_stats.get('forehand_slice', 'N/A')} |
+| 反手上旋/削球 | {oppo_stats.get('backhand_topspin', 'N/A')} / {oppo_stats.get('backhand_slice', 'N/A')} |
+| 平均挥拍速度 | {oppo_stats.get('avg_swing_speed', 'N/A')} km/h |
+
+### 体能数据
+| 指标 | 数值 | 评分 |
+|------|------|------|
+| 平均心率 | {cardio.get('avg_hr', 'N/A')} bpm | {cardio.get('score', 'N/A')} 分 |
+| 总跑动距离 | {movement.get('total_distance_m', 'N/A')} m ({movement.get('distance_per_min', 'N/A')} m/min) | {movement.get('score', 'N/A')} 分 |
+| 总卡路里 | {load.get('total_calories', 'N/A')} kcal ({load.get('calories_per_min', 'N/A')} kcal/min) | {load.get('score', 'N/A')} 分 |
+| 体能 NTRP 等效 | {fitness_data.get('fitness_ntrp_equivalent', 'N/A')} | |
+
+**重要：请在报告中结合以上手表数据进行体能相关分析。**"""
+
+
+def generate_fitness_section_text(fitness_data: dict[str, Any]) -> str:
+    """Generate a compact fitness summary for the report prompt when watch data is available."""
+    if not fitness_data or not fitness_data.get("cardiovascular_endurance"):
+        return ""
+    cardio = fitness_data.get("cardiovascular_endurance", {})
+    movement = fitness_data.get("movement", {})
+    ntrp = fitness_data.get("fitness_ntrp_equivalent", "N/A")
+    return f"""体能 NTRP 等效：{ntrp} | 心肺 {cardio.get('score','?')}分 | 移动 {movement.get('score','?')}分"""
 
 
 def generate_final_report(
@@ -212,24 +230,35 @@ def generate_final_report(
 
 ## 报告结构（必须严格遵循）
 
+{generate_fitness_section_text(fitness_data)}
+
 ### 一、评分
 对检测到的 8 种击球类型（正手上旋 / 正手平击 / 正手切削 / 反手上旋 / 反手平击 / 反手切削 / 发球 / 截击），
 给出 NTRP 等级（1.0-7.0）和简短理由。未检测到的标注"未检测到"。
+**如有手表数据，额外给出体能综合评分（心肺/移动/负荷）。**
 
-### 二、评价
-详细分析每个模块：
+### 二、技术评价
+详细分析每个检测到的击球模块：
 - ✅ 做得好的地方（2-3 点）
 - ⚠️ 存在的问题（2-3 点，要具体。不是"抛球不稳"，而是"抛球高度在头顶上方约30cm，偏向左侧约20cm"）
 - 📊 与目标等级 NTRP {user_profile.get('target_ntrp', '?')} 的差距在哪
 
-### 三、调整方案
-针对每个问题，给出具体的纠正方案：
+### 三、体能分析（如有手表数据必须写）
+结合手表数据分析学员的场上表现：
+- 🏃 跑动效率：总距离、每分钟跑动距离是否匹配当前 NTRP 等级？是否存在无效跑动？
+- ❤️ 心率分配：各心率区间的时间占比是否合理？是否在 Zone 4-5 停留过久？
+- ⚡ 体能分配：前后半段心率漂移情况，是否存在明显体力衰减？
+- 📊 与体能 NTRP 基准的对比（参考 NTRP 体能对照表）
+- 💡 体能改进建议：需要加强有氧耐力还是无氧爆发力？
+
+### 四、调整方案
+针对技术问题和体能短板，给出具体的纠正方案：
 - 问题：xxx
 - 根因：xxx
 - 纠正练习：xxx（具体到每天做几组、每组几次、注意什么）
 
-### 四、训练建议
-- 本周训练计划（每天练什么、多长时间、组数次数）
+### 五、训练建议
+- 本周训练计划（技术训练 + 体能训练，每天练什么、多长时间、组数次数）
 - 建议 2 周后复评，重点检查哪些改进点
 - 长期进阶路径（从当前水平到目标水平需要经历哪几个阶段）
 
@@ -238,6 +267,7 @@ def generate_final_report(
 - 每个问题必须配对应的练习，每个练习必须有组数次数
 - 优先排序：告诉学员最先应该改什么，为什么这是最重要的
 - 评分要诚实，但重点放在如何提高上
+- 有手表数据时必须分析体能，无手表数据时标注"未上传手表数据，无法评估体能"
 
 用 `---JSON---` 分隔两部分输出：
 第一部分：Markdown 格式的完整教练报告（中文）
@@ -256,8 +286,15 @@ def generate_final_report(
     "serve": {{"score": 65, "level": "2.5", "top_issue": "..."}},
     "volley": {{"score": null, "level": null, "top_issue": "未检测到"}}
   }},
-  "top_3_priorities": ["最先改的技术", "其次", "再次"],
-  "weekly_plan_summary": "一句话概括本周训练重点"
+  "fitness_breakdown": {{
+    "cardio_score": 75,
+    "movement_score": 60,
+    "load_score": 70,
+    "fitness_ntrp": 3.0,
+    "assessment": "有氧耐力良好，但移动效率和体能分配需加强"
+  }},
+  "top_3_priorities": ["最先改的技术或体能短板", "其次", "再次"],
+  "weekly_plan_summary": "一句话概括本周训练重点（含技术和体能）"
 }}
 ```"""
 
