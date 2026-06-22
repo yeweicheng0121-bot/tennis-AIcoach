@@ -200,6 +200,63 @@ OPPO 网球模式（定量统计）          视频关键帧（定性分析）
   手表 = 精确的"是什么"            视频 = 解释"为什么 / 怎么改进"
 ```
 
+### v2.0 技术升级：MediaPipe 本地计算 + JSON 数据 + 关键帧
+
+> **版本**: v2.0 | **日期**: 2026-06-22 | **状态**: 设计中
+
+v2.0 将视频分析从"全帧送 LLM 看图"改为"本地 CV 计算 + 结构化数据 + 3 关键帧"。核心变化：
+
+**旧架构（v1.0）**：
+```
+视频 → ffmpeg 盲抽 56 帧 → 全送 Claude 看图目测 → 定性报告
+```
+
+**新架构（v2.0）**：
+```
+视频 → OpenCV 逐帧读取 → MediaPipe Pose (33 点 × 1800 帧)
+                                    │
+                          ┌─────────┼─────────┐
+                          ▼         ▼         ▼
+                      关节角度   躯干扭转   击球点位置
+                      (atan2)   (肩-髋夹)  (手腕坐标)
+                          │         │         │
+                          └─────────┼─────────┘
+                                    ▼
+                          biomechanical extremum
+                          自动选取 3 张关键帧
+                                    │
+                          ┌─────────┼─────────┐
+                          ▼                   ▼
+                    结构化 JSON (5KB)    3 张关键帧 (JPEG)
+                          │                   │
+                          └─────────┬─────────┘
+                                    ▼
+                              Claude 生成五段式报告
+```
+
+**新增模块**：
+
+| 模块 | 文件 | 职责 |
+|------|------|------|
+| 帧抽取 | `server/worker/frames.py` | OpenCV `cv2.VideoCapture` 替代 ffmpeg |
+| 姿态估计 | `server/worker/pose.py` | MediaPipe Pose 33 点关键点推理 |
+| 运动学计算 | `server/worker/biomechanics.py` | 关节角度、扭转角、速度、关键帧选取 |
+| 结构化报告 | `server/worker/structured_report.py` | 生成 5KB JSON + 选取 3 张峰值帧 |
+
+**删除的旧模块**：
+- `detect_video_modules()` — 击球类型由 MediaPipe 轨迹分析替代
+- `analyze_frames_batch()` — 逐帧看图由结构化 JSON 替代
+- `CONTENT_DETECTION_PROMPT` / `ANALYSIS_SYSTEM_PROMPT` — 不再需要
+
+**Token 优化**：
+
+| | v1.0 | v2.0 | 节省 |
+|---|------|------|:--:|
+| 输入 token | ~28,000 | ~3,000 | 90% |
+| 图片数量 | 56 张 | 3 张 | 95% |
+| 角度精度 | ±15°（目测） | ±2°（数学） | — |
+| 离线计算占比 | 0% | 70% | — |
+
 ### 成本估算
 
 - 120 帧 × ~500 token/帧 ≈ 60,000 input tokens

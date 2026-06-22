@@ -2174,6 +2174,197 @@ def auto_tag(technique_breakdown):
 
 ---
 
+## Phase 7.5: v2.0 MediaPipe 分析引擎升级 (Week 5-6 重做)
+
+> 替换 Phase 7 的 Task 12-14。核心思路：本地 CV 计算 + 结构化 JSON + 3 关键帧 → Claude 纯文本+少量图生成报告。
+
+### Task 12v2: OpenCV 帧抽取 + MediaPipe 姿态估计
+
+**Files:**
+- Create: `server/worker/frames.py` (重写)
+- Create: `server/worker/pose.py`
+- Create: `server/worker/biomechanics.py`
+- Create: `server/worker/structured_report.py`
+- Modify: `server/worker/analyze.py`
+- Modify: `server/worker/llm.py` (简化为纯文本+3图)
+- Delete: 旧 `detect_video_modules`, `analyze_frames_batch` 函数
+- Delete: `CONTENT_DETECTION_PROMPT`, `ANALYSIS_SYSTEM_PROMPT`
+- Modify: `server/requirements.txt` (加 opencv-python, mediapipe, numpy)
+
+**Step 1: `frames.py` — OpenCV 逐帧读取**
+
+```python
+import cv2
+import os
+
+def extract_all_frames(video_path: str, output_dir: str) -> list[str]:
+    os.makedirs(output_dir, exist_ok=True)
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    frames = []
+    idx = 0
+    while True:
+        ret, frame = cap.read()
+        if not ret: break
+        path = os.path.join(output_dir, f"frame_{idx:06d}.jpg")
+        cv2.imwrite(path, frame)
+        frames.append(path)
+        idx += 1
+    cap.release()
+    return frames, fps
+```
+
+**Step 2: `pose.py` — MediaPipe Pose 推理**
+
+```python
+import mediapipe as mp
+import cv2
+import numpy as np
+
+mp_pose = mp.solutions.pose
+pose = mp_pose.Pose(static_image_mode=False, model_complexity=1, min_detection_confidence=0.5)
+
+def extract_landmarks(frame_path: str) -> dict:
+    img = cv2.imread(frame_path)
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    result = pose.process(img_rgb)
+    if not result.pose_landmarks: return None
+    return {
+        lm: {"x": result.pose_landmarks.landmark[lm].x,
+             "y": result.pose_landmarks.landmark[lm].y,
+             "z": result.pose_landmarks.landmark[lm].z,
+             "visibility": result.pose_landmarks.landmark[lm].visibility}
+        for lm in range(33)
+    }
+```
+
+**Step 3: `biomechanics.py` — 运动学计算**
+
+```python
+import numpy as np
+import math
+
+def joint_angle(a, b, c):
+    """三点法线夹角: a-b-c 的夹角（度）"""
+    ba = np.array([a['x']-b['x'], a['y']-b['y']])
+    bc = np.array([c['x']-b['x'], c['y']-b['y']])
+    cos = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc))
+    return math.degrees(math.acos(max(-1, min(1, cos))))
+
+def shoulder_hip_angle(l_shoulder, r_shoulder, l_hip, r_hip):
+    """肩线 vs 髋线夹角（度）— 量化躯干扭转"""
+    shoulder_vec = np.array([r_shoulder['x']-l_shoulder['x'], r_shoulder['y']-l_shoulder['y']])
+    hip_vec = np.array([r_hip['x']-l_hip['x'], r_hip['y']-l_hip['y']])
+    cos = np.dot(shoulder_vec, hip_vec) / (np.linalg.norm(shoulder_vec) * np.linalg.norm(hip_vec))
+    return math.degrees(math.acos(max(-1, min(1, cos))))
+
+def wrist_speed(wrist_positions, fps, window=5):
+    """手腕帧间速度（像素/秒 × 校准系数 → km/h）"""
+    speeds = []
+    for i in range(window, len(wrist_positions)):
+        dx = wrist_positions[i]['x'] - wrist_positions[i-window]['x']
+        dy = wrist_positions[i]['y'] - wrist_positions[i-window]['y']
+        dist = math.sqrt(dx*dx + dy*dy)
+        speeds.append(dist * fps / window)
+    return max(speeds) if speeds else 0
+
+def find_key_frames(landmarks_by_frame, fps):
+    """Biomechanical extremum: 自动选取每类动作的 3 张关键帧"""
+    key_frames = []
+    for frame_idx, lms in enumerate(landmarks_by_frame):
+        if not lms: continue
+        rw = lms.get(16, {})  # right wrist
+        lw = lms.get(15, {})  # left wrist
+        sh = shoulder_hip_angle(lms.get(11,{}), lms.get(12,{}), lms.get(23,{}), lms.get(24,{}))
+        # Serve: non-dominant wrist Y min (toss peak)
+        lw_y = lw.get('y', 0)
+        # Contact: dominant wrist speed peak
+        rw_speed = wrist_speed([lms.get(16,{})], fps)
+        key_frames.append({
+            'frame_idx': frame_idx,
+            'shoulder_hip_angle': sh,
+            'left_wrist_y': lw_y,
+            'right_wrist_speed': rw_speed,
+        })
+    # Select extremum frames
+    top_twist = sorted(key_frames, key=lambda x: x['shoulder_hip_angle'], reverse=True)[:3]
+    top_contact = sorted(key_frames, key=lambda x: x['right_wrist_speed'], reverse=True)[:3]
+    top_toss = sorted(key_frames, key=lambda x: x['left_wrist_y'])[:3]
+    selected = set()
+    result = []
+    for kf in top_contact + top_twist + top_toss:
+        if kf['frame_idx'] not in selected and len(result) < 5:
+            selected.add(kf['frame_idx'])
+            result.append(kf)
+    return result[:3]
+```
+
+**Step 4: `structured_report.py` — 生成结构化 JSON**
+
+```python
+def build_structured_data(landmarks_by_frame, key_frames, fps, video_duration, focus_module):
+    """生成 5KB 结构化 JSON — 替代旧 llm.py 全图分析"""
+    angles = []
+    twists = []
+    for lms in landmarks_by_frame:
+        if not lms: continue
+        angles.append({
+            'elbow_r': joint_angle(lms[12], lms[14], lms[16]),
+            'knee_r': joint_angle(lms[24], lms[26], lms[28]),
+            'shoulder': joint_angle(lms[14], lms[12], lms[24]),
+        })
+        twists.append(shoulder_hip_angle(lms[11], lms[12], lms[23], lms[24]))
+
+    return {
+        'video_duration_sec': video_duration,
+        'total_frames': len(landmarks_by_frame),
+        'fps': fps,
+        'focus_module': focus_module,
+        'shot_type_distribution': classify_shot_types(landmarks_by_frame),
+        'key_frames': key_frames,
+        'angle_stats': {
+            'elbow_avg': np.mean([a['elbow_r'] for a in angles]),
+            'elbow_max': max([a['elbow_r'] for a in angles]),
+            'knee_avg': np.mean([a['knee_r'] for a in angles]),
+            'shoulder_avg': np.mean([a['shoulder'] for a in angles]),
+        },
+        'twist_stats': {
+            'max': max(twists),
+            'avg': np.mean(twists),
+            'min': min(twists),
+        },
+    }
+
+def classify_shot_types(landmarks_by_frame) -> dict:
+    """基于手腕轨迹高度+方向粗略分类击球类型"""
+    # 简单启发式：手腕 Y 坐标分布
+    # serve: 手腕轨迹高（过肩），forehand: 中位，backhand: 反侧
+    return {'forehand': 0, 'backhand': 0, 'serve': 0, 'volley': 0}
+```
+
+**Step 5: `analyze.py` — 更新主流水线**
+
+原有 `_do_analysis` 中的图片帧分析替换为：
+```python
+# 旧: frame_paths = extract_keyframes(...)
+# 新:
+all_frames, fps = extract_all_frames(video.storage_path, frame_dir)
+landmarks_by_frame = [extract_landmarks(f) for f in all_frames]
+structured_data = build_structured_data(landmarks_by_frame, key_frames, fps, ...)
+# 3 张关键帧转 base64 → 发给 Claude
+key_frame_images = [all_frames[kf['frame_idx']] for kf in key_frames[:3]]
+# 生成报告：JSON 文本 + 3 张关键帧图片
+report_result = generate_final_report(structured_data, key_frame_images, oppo_stats, fitness_data, rag_context, user_profile, covered_modules, focus_module)
+```
+
+**Step 6: `llm.py` — 简化**
+
+- 删除: `detect_video_modules()`, `analyze_frames_batch()`, `CONTENT_DETECTION_PROMPT`, `ANALYSIS_SYSTEM_PROMPT`
+- 重写: `generate_final_report()` — 参数改为 `(structured_data, key_frame_images, ...)`
+- QQ 模型函数保留: `_chat()`, `_encode_image()`, `_image_content()`, `extract_screenshot_stats()`
+
+---
+
 ## Phase 8: 移动端核心页面 (Week 7)
 
 ### Task 16: 移动端 API 服务层 + 状态管理
