@@ -13,41 +13,45 @@ from server.worker.llm import analyze_frames_batch, generate_final_report, detec
 from server.worker.rag import retrieve_relevant_chunks, format_chunks_for_prompt
 from server.worker.oppo import compute_fitness_breakdown
 
-engine = create_async_engine(settings.database_url)
-AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
-
-
 @celery_app.task(bind=True, name="analyze_tennis_session")
-def analyze_tennis_session(self, video_id: str, health_workout_id: str | None, user_id: str):
+def analyze_tennis_session(self, video_id: str, health_workout_id: str | None, user_id: str, focus_module: str | None = None):
+    """Run the analysis in a dedicated event loop. Create fresh DB engine per task to avoid asyncpg loop conflicts."""
     import asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
-        return asyncio.run(_run_analysis(self, video_id, health_workout_id, user_id))
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            return loop.run_until_complete(_run_analysis(self, video_id, health_workout_id, user_id))
-        finally:
-            loop.close()
+        # Create engine + session INSIDE the loop so asyncpg pool is on the correct loop
+        _engine = create_async_engine(settings.database_url)
+        _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
+        return loop.run_until_complete(_run_analysis(self, video_id, health_workout_id, user_id, _session_factory, focus_module))
+    finally:
+        loop.run_until_complete(_engine.dispose())
+        loop.close()
 
 
-async def _run_analysis(task, video_id: str, health_workout_id: str | None, user_id: str):
+async def _run_analysis(task, video_id: str, health_workout_id: str | None, user_id: str, session_factory=None, focus_module: str | None = None):
     try:
-        return await _do_analysis(task, video_id, health_workout_id, user_id)
+        return await _do_analysis(task, video_id, health_workout_id, user_id, session_factory, focus_module)
     except Exception as e:
-        async with AsyncSessionLocal() as db:
-            from server.models.video import Video
-            result = await db.execute(select(Video).where(Video.id == video_id))
-            video = result.scalar_one_or_none()
-            if video:
-                video.upload_status = "failed"
-                await db.commit()
+        # Mark video as failed — use a fresh sync connection to avoid loop issues
+        try:
+            import psycopg2
+            sync_url = __import__("server.config", fromlist=["settings"]).settings.database_url
+            sync_url = sync_url.replace("+asyncpg", "+psycopg2")
+            conn = psycopg2.connect(sync_url)
+            conn.autocommit = True
+            cur = conn.cursor()
+            cur.execute("UPDATE videos SET upload_status = 'failed' WHERE id = %s", (video_id,))
+            cur.close()
+            conn.close()
+        except Exception:
+            pass
         task.update_state(state="FAILURE", meta={"error": str(e), "stage": "failed"})
         raise
 
 
-async def _do_analysis(task, video_id: str, health_workout_id: str | None, user_id: str):
-    async with AsyncSessionLocal() as db:
+async def _do_analysis(task, video_id: str, health_workout_id: str | None, user_id: str, session_factory=None, focus_module: str | None = None):
+    async with session_factory() as db:
         from server.models.video import Video
         from server.models.user import User
         from server.models.health import HealthWorkout
@@ -61,10 +65,17 @@ async def _do_analysis(task, video_id: str, health_workout_id: str | None, user_
         task.update_state(state="PROCESSING", meta={"stage": "extracting_frames", "progress": 0.05})
 
         frame_dir = os.path.join(settings.frame_storage_path, video_id)
-        frame_paths = extract_keyframes(video.storage_path, frame_dir, interval_seconds=15)
+        # Delete old frames to force re-extraction with current settings
+        import shutil
+        if os.path.exists(frame_dir):
+            shutil.rmtree(frame_dir)
+        # Dense extraction for short practice videos: serve motions happen in ~1s
+        video_duration = video.duration_seconds or 120
+        interval = 2 if video_duration < 180 else 15
+        frame_paths = extract_keyframes(video.storage_path, frame_dir, interval_seconds=interval)
 
         task.update_state(state="PROCESSING", meta={"stage": "detecting_content", "progress": 0.15, "message": "Identifying technical modules..."})
-        content_info = detect_video_modules(frame_paths)
+        content_info = detect_video_modules(frame_paths, focus_module)
         covered_modules = content_info.get("covered_modules", [])
         if not covered_modules:
             covered_modules = ["forehand", "backhand", "serve", "volley", "footwork", "return"]
@@ -77,7 +88,7 @@ async def _do_analysis(task, video_id: str, health_workout_id: str | None, user_
         for i, batch in enumerate(batches):
             pct = 0.25 + 0.35 * (i / len(batches))
             task.update_state(state="PROCESSING", meta={"stage": "analyzing_frames", "progress": pct, "batch": i + 1, "total_batches": len(batches)})
-            frame_analyses.append(analyze_frames_batch(batch, i, len(batches)))
+            frame_analyses.append(analyze_frames_batch(batch, i, len(batches), focus_module))
 
         oppo_stats = {}
         fitness_data = {}
@@ -122,7 +133,7 @@ async def _do_analysis(task, video_id: str, health_workout_id: str | None, user_
 
         task.update_state(state="PROCESSING", meta={"stage": "generating_report", "progress": 0.85})
 
-        report_result = generate_final_report(frame_analyses, oppo_stats, fitness_data, rag_context, user_profile, covered_modules)
+        report_result = generate_final_report(frame_analyses, oppo_stats, fitness_data, rag_context, user_profile, covered_modules, focus_module)
         report_md = report_result["report_markdown"]
         structured = report_result["structured"]
 

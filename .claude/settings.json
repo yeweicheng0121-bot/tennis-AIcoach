@@ -17,7 +17,17 @@
       "Bash(npx create-expo-app@54.0.35 mobile --template blank-typescript)",
       "Bash(rm -rf /tmp/test_expo)",
       "Bash(npx create-expo-app@latest /tmp/test_expo --template blank-typescript)",
-      "Read(//tmp/test_expo/**)"
+      "Read(//tmp/test_expo/**)",
+      "Bash(python3 -c ' *)",
+      "Bash(redis-cli GET \"celery-task-meta-0265730e-fca6-43be-b2db-99b13820b21e\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f'status={d.get\\(\\\\\"status\\\\\"\\)} result_keys={list\\(d.get\\(\\\\\"result\\\\\",{}\\).keys\\(\\)\\) if d.get\\(\\\\\"result\\\\\"\\) else \\\\\"none\\\\\"}'\\)\")",
+      "Bash(redis-cli GET \"celery-task-meta-de0fa084-b977-4654-b6cb-80b3a783169e\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d, indent=2, ensure_ascii=False\\)\\)\")",
+      "Bash(curl -s -X POST http://localhost:8000/auth/login -H 'Content-Type: application/json' -d '{\"phone\":\"13800008888\",\"password\":\"demo123\"}')",
+      "Bash(ffprobe -v quiet -show_entries format=duration,size -of csv=p=0 /Users/yeweicheng/Desktop/AI项目/tennis-AIcoach/storage/videos/cb6cdcb2-3735-4cc5-80ba-4ecd52f0325f/b48335ca-2c3f-4035-86e3-7f1a985cee25.mov)",
+      "Bash(curl -s http://localhost:8000/openapi.json)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); paths=[p for p in d.get\\('paths',{}\\) if 'aggregate' in p]; print\\('Aggregate:', paths[0] if paths else 'NOT FOUND'\\)\")",
+      "Bash(curl -s http://localhost:8888/tennis_web.html)"
     ]
   }
 }

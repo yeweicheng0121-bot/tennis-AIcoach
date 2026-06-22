@@ -23,11 +23,12 @@ router = APIRouter(prefix="/analysis", tags=["analysis"])
 class StartAnalysisRequest(BaseModel):
     video_id: str
     health_workout_id: Optional[str] = None
+    focus_module: Optional[str] = None  # e.g. "serve", "forehand", "backhand" — hints for AI
 
 
 @router.post("/start")
 async def start_analysis(req: StartAnalysisRequest, user: User = Depends(get_current_user)):
-    task = analyze_tennis_session.delay(video_id=req.video_id, health_workout_id=req.health_workout_id, user_id=str(user.id))
+    task = analyze_tennis_session.delay(video_id=req.video_id, health_workout_id=req.health_workout_id, user_id=str(user.id), focus_module=req.focus_module)
     return {"task_id": task.id, "status": "queued", "estimated_duration_seconds": 240}
 
 

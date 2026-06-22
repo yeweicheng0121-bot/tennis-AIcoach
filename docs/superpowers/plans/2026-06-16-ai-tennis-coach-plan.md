@@ -2147,6 +2147,33 @@ app.include_router(training_router)
 
 ---
 
+### Task 15d: 自动标签 + 下载/删除
+
+**Files:**
+- Modify: `server/api/assessments.py`
+
+**Goal:** 每次评估自动生成标签 + 支持下载和删除。
+
+**Auto-tag logic:**
+```python
+def auto_tag(technique_breakdown):
+    detected = set()
+    for shot, info in (technique_breakdown or {}).items():
+        if info.get("score") is not None:
+            detected.add(shot.split("_")[0])
+    if len(detected) == 0: return "综合训练"
+    if len(detected) == 1: return TAG_LABELS.get(detected.pop())
+    if len(detected) >= 3: return "综合训练"
+    return f"{labels[0]}+{labels[1]}"
+```
+
+**New endpoints:**
+- `DELETE /analysis/assessments/{id}` — delete assessment
+- `GET /analysis/assessments/{id}/download` — download markdown file
+- List endpoint now includes `tag` field
+
+---
+
 ## Phase 8: 移动端核心页面 (Week 7)
 
 ### Task 16: 移动端 API 服务层 + 状态管理
