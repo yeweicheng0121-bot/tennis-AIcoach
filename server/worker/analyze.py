@@ -163,4 +163,4 @@ async def _do_analysis(task, video_id: str, health_workout_id: str | None, user_
         video.upload_status = "analyzed"
         await db.commit()
 
-        return {"assessment_id": str(assessment.id), "status": "completed", "frame_count": len(frame_paths)}
+        return {"assessment_id": str(assessment.id), "status": "completed", "frame_count": len(all_frames)}
